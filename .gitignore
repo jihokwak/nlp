@@ -1,2 +1,3 @@
-/.idea
-data/GoogleNews-vectors-negative300.bin
+.idea/
+word2vec/data/
+seq2seq_chatbot/model_v2/data_out/check_point/
