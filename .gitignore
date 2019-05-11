@@ -1,3 +1,5 @@
 .idea/
 word2vec/data/
 seq2seq_chatbot/model_v2/data_out/check_point/
+venv/
+sentiment/data
