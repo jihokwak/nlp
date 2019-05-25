@@ -1,0 +1,143 @@
+import tensorflow as tf
+tf.compat.v1.disable_eager_execution()
+from keras import layers, models
+from keras import datasets
+from keras import backend as K
+import matplotlib.pyplot as plt
+import matplotlib
+from matplotlib import ticker
+from keras.utils import plot_model
+from keras.callbacks import EarlyStopping, ModelCheckpoint
+import numpy as np
+
+
+batch_size = 64
+epochs = 100
+latent_dim = 256
+num_samples = 10000 #학습 데이터 개수
+data_path = "02_seq2seq/data/Corpus10/eng2kor.txt"
+
+input_texts = []
+target_texts = []
+input_characters = set()
+target_characters = set()
+
+with open(data_path, 'r', encoding='utf-8') as f:
+    lines = f.read().split("\n")
+
+for idx, line in enumerate(lines[: min(num_samples, len(lines) - 1)]):
+    if len(line.split("\t")) < 2 :
+        continue
+    input_text, target_text = line.split("\t")[:2]
+    target_text = "\t" + target_text + "\n"
+    input_texts.append(input_text)
+    target_texts.append(target_text)
+    for char in input_text:
+        if char not in input_characters:
+            input_characters.add(char)
+    for char in target_text:
+        if char not in target_characters:
+            target_characters.add(char)
+
+input_characters = sorted(list(input_characters))
+target_characters = sorted(list(target_characters))
+num_encoder_tokens = len(input_characters)
+num_decoder_tokens = len(target_characters)
+max_encoder_seq_length = max([len(txt) for txt in input_texts])
+max_decoder_seq_length = max([len(txt) for txt in target_texts])
+
+print('Number of samples:', len(input_texts))
+print('Number of unique input tokens:', num_encoder_tokens)
+print('Number of unique output tokens:', num_decoder_tokens)
+print('Max sequence length for inputs:', max_encoder_seq_length)
+print('Max sequence length for outputs:', max_decoder_seq_length)
+
+#문자 -> 숫자 변환용 사전
+input_token_index = dict([(char, i) for i, char in enumerate(input_characters)])
+target_token_index = dict([(char, i) for i, char in enumerate(target_characters)])
+
+#학습에 사용할 데이터를 담을 3차원 배열
+encoder_input_data = np.zeros((len(input_texts), max_encoder_seq_length, num_encoder_tokens), dtype='float32')
+decoder_input_data = np.zeros((len(input_texts), max_decoder_seq_length, num_decoder_tokens), dtype='float32')
+decoder_target_data = np.zeros((len(input_texts), max_decoder_seq_length, num_decoder_tokens), dtype='float32')
+
+# 문장을 문자 단위로 원핫 인코딩하면서 학습용 데이터를 만듬
+for i, (input_text, target_text) in enumerate(zip(input_texts, target_texts)) :
+    for t, char in enumerate(input_text):
+        encoder_input_data[i, t, input_token_index[char]] = 1.
+    for t, char in enumerate(target_text):
+        decoder_input_data[i, t, target_token_index[char]] = 1.
+        if t > 0:
+            decoder_target_data[i, t-1, target_token_index[char]] = 1.
+
+# 인코더 생성
+encoder_inputs = layers.Input(shape=(None, num_encoder_tokens))
+_, state_h = layers.GRU(latent_dim, return_state=True)(encoder_inputs) #출력은 사용하지 않는다.
+
+# 디코더 생성
+decoder_inputs = layers.Input(shape=(None, num_decoder_tokens))
+decoder_outputs, _ = layers.GRU(latent_dim, return_sequences=True, return_state=True)(decoder_inputs, initial_state=state_h)
+decoder_outputs = layers.Dense(num_decoder_tokens, activation='softmax')(decoder_outputs)
+
+# 모델생성/훈련
+model = models.Model([encoder_inputs, decoder_inputs], decoder_outputs)
+model.summary()
+model.compile(optimizer='rmsprop', loss='categorical_crossentropy')
+
+model.fit([encoder_input_data, decoder_input_data], decoder_target_data,
+          batch_size=batch_size, epochs=epochs, validation_split=0.2, verbose=2)
+
+# 추론(테스트)
+
+# 추론 모델 생성
+encoder_model = models.Model(encoder_inputs, state_h)
+
+decoder_state_input_h = layers.Input(shape=(latent_dim,))
+decoder_outputs, state_h = layers.GRU(latent_dim, return_sequences=True, return_state=True)(decoder_inputs, initial_state=decoder_state_input_h)
+decoder_outputs = layers.Dense(num_decoder_tokens, activation='softmax')(decoder_outputs)
+decoder_model = models.Model(
+    [decoder_inputs, decoder_state_input_h],
+    [decoder_outputs, state_h]
+)
+
+# 숫자 -> 문자 변환용 사전
+reverse_input_char_index = {i:char for char, i in input_token_index.items()}
+reverse_target_char_index = {i:char for char, i in target_token_index.items()}
+
+def decode_sequence(input_seq) :
+    # 입력 문장을 인코딩
+    states_value = encoder_model.predict(input_seq)
+
+    # 디코더의 입력으로 쓸 단일 문자
+    target_seq = np.zeros((1,1, num_decoder_tokens))
+    # 첫입력은 시작 문자인 '\t'로 설정
+    target_seq[0, 0, target_token_index['\t']] = 1.
+
+    # 문장 생성
+    stop_condition = False
+    decoded_sentence = ''
+    while not stop_condition :
+        # 이전의 출력, 상태를 디코더에 넣어서 새로운 출력, 상태를 얻음
+        # 이전 문자와 상태로 다음 문자와 상태를 얻는다고 보면 됨.
+        output_tokens, h, c = decoder_model.predict([target_seq] + states_value)
+        # 사전을 사용해서 원핫인코딩 출력을 실제 문자로 변환
+        sampled_token_index = np.argmax(output_tokens[0, -1, :])
+        sampled_char = reverse_target_char_index[sampled_token_index]
+        decoded_sentence += sampled_char
+
+        # 종료 문자가 나왔거나 문장 길이가 한계를 넘으면 종료
+        if (sampled_char == '\n' or len(decoded_sentence) > max_decoder_seq_length):
+            stop_condition = True
+
+        # 디코더의 다음 입력으로 쓸 데이터 갱신
+        target_seq = np.zeros((1, 1, num_decoder_tokens))
+        target_seq[0, 0, sampled_token_index] = 1.
+
+        states_value = [h, c]
+
+    return decoded_sentence
+
+for seq_index in range(30) :
+    input_seq = encoder_input_data[seq_index:seq_index+1]
+    decoded_sentence = decode_sequence(input_seq)
+    print('"{}" -> "{}"'.format(input_texts[seq_index], decoded_sentence.strip()))
