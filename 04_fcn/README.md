@@ -1,3 +1,6 @@
+# 발표자 
+KMU 신재은
+
 # FCN 논문
 https://people.eecs.berkeley.edu/~jonlong/long_shelhamer_fcn.pdf
 

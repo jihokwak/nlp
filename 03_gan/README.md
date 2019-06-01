@@ -1,3 +1,5 @@
+# 발표자 
+KMU 추수진
 # GAN논문
 http://papers.nips.cc/paper/5423-generative-adversarial-nets.pdf
 # DCGAN논문

@@ -1,3 +1,6 @@
+# 발표자 
+KMU 곽지호
+
 # 논문
 https://drive.google.com/open?id=1UlBG8CeFEyug9a8mh7NLxpoTZfurmFGp
 
